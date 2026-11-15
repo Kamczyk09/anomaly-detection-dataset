@@ -1,9 +1,10 @@
 # Data (large, kept outside version control)
-*.bin
-*.npy
-IQ_*.json
+data/
 
 # Python
 .venv/
 __pycache__/
 .ipynb_checkpoints/
+
+# Notes and instructions
+*.md
