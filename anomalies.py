@@ -1,12 +1,3 @@
-"""Simple synthetic anomalies (tone, chirp, pulse, comb, OFDM, FSK) added to a complex I/Q signal.
-
-All functions share the same arguments:
-    iq          complex I/Q samples
-    fs          sampling frequency [Hz]
-    start, stop time window of the anomaly [s]
-    isr         anomaly power relative to the average power of the recording [dB]
-    ramp        smooth on/off time [s] (an abrupt switch smears over all frequencies)
-"""
 import numpy as np
 
 
@@ -18,7 +9,7 @@ def _amplitude(iq, isr):
 
 def _envelope(t, start, stop, ramp):
     """1 inside [start, stop], 0 outside, with rounded (raised-cosine) edges."""
-    env = np.clip(np.minimum(t - start, stop - t) / ramp, 0, 1)  # 0 -> 1 -> 0, linear edges
+    env = np.clip(np.minimum(t - start, stop - t) / ramp, 0, 1)
     return np.sin(np.pi / 2 * env) ** 2
 
 

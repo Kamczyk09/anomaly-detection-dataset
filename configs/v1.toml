@@ -1,0 +1,49 @@
+[capture]
+sample_rate_hz = 61.44e6
+num_samples = 1_299_200             # captures are cropped to this length; shorter files are excluded
+
+[scene]
+num_anomalies = { dist = "choice", values = [3, 4, 5], weights = [1, 1, 1] }
+min_inside_fraction = 0.8           # an anomaly may cross the image edge, but at most 20% of it
+f_max_hz = 22e6                     # anomalies stay inside +/-f_max_hz (the image shows +/-24 MHz)
+min_duration_s = 2e-3               # shortest time window of an anomaly
+
+[scene.class_weights]
+tone = 3.0
+chirp = 3.0
+pulse = 3.0
+comb = 1.0
+ofdm = 1.0
+fsk = 1.0
+
+[power]
+isr_db = { dist = "uniform", min = -10.0, max = 10.0 }
+
+[labels]
+mask_threshold_db = 0.0             # default threshold for instance and semantic masks
+
+[classes.tone]
+ramp_s = 0.2e-3                     # smooth on/off time
+
+[classes.chirp]
+ramp_s = 0.2e-3
+
+[classes.pulse]
+isr_db = { dist = "uniform", min = 0.0, max = 15.0 }   # short pulses need more peak power
+period_s = { dist = "uniform", min = 0.5e-3, max = 3e-3 }
+width_s = { dist = "uniform", min = 0.1e-6, max = 0.5e-6 }
+
+[classes.comb]
+ramp_s = 0.2e-3
+n_tones = { dist = "choice", values = [3, 4, 5, 6, 7] }
+spacing_hz = { dist = "uniform", min = 0.5e6, max = 3e6 }
+
+[classes.ofdm]
+ramp_s = 0.2e-3
+bandwidth_hz = { dist = "uniform", min = 1e6, max = 10e6 }
+subcarrier_spacing_hz = 15e3
+
+[classes.fsk]
+ramp_s = 0.1e-3
+deviation_hz = { dist = "uniform", min = 0.5e6, max = 3e6 }
+symbol_duration_s = { dist = "uniform", min = 0.3e-3, max = 1e-3 }

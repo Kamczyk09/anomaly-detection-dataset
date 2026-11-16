@@ -1,5 +1,5 @@
 # Data (large, kept outside version control)
-data/
+data/*
 
 # Python
 .venv/
@@ -8,3 +8,5 @@ __pycache__/
 
 # Notes and instructions
 .claude
+
+WASD_abnormal_signal_generation.ipynb
