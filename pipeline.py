@@ -12,7 +12,7 @@ import tomllib
 import numpy as np
 
 from anomalies import add_tone, add_chirp, add_pulse, add_comb, add_ofdm, add_fsk
-from spectrogram import iq_to_spectrogram
+from spectrogram import iq_to_spectrogram, power_map
 
 
 def load_config(path):
@@ -113,6 +113,27 @@ ANOMALY_TYPES = {
 NEEDS_RNG = {"ofdm", "fsk"}
 
 
+def anomaly_pixels(p_anomaly, fraction):
+    """Mask of the strongest spectrogram pixels that together hold `fraction` of the energy."""
+    values = np.sort(p_anomaly.ravel())[::-1]
+    n_pixels = np.searchsorted(np.cumsum(values), fraction * values.sum()) + 1
+    return p_anomaly >= values[n_pixels - 1]
+
+
+def scale_to_local_isr(anomaly_alone, p_background, fs, isr, fraction):
+    """Rescale the anomaly so that its local ISR (measured on the spectrogram) equals isr [dB].
+
+    Local ISR = sum of anomaly power / sum of background power, both over the anomaly's pixels.
+    Measuring there, and not over the whole recording, makes isr mean the same contrast
+    whether the anomaly is narrow or wide, on top of the LTE channel or in an empty band.
+    """
+    p_anomaly, _ = power_map(anomaly_alone, fs)
+    mask = anomaly_pixels(p_anomaly, fraction)
+    measured = np.sum(p_anomaly[mask]) / np.sum(p_background[mask])
+    # Power grows with amplitude squared, so one rescaling hits the target exactly
+    return anomaly_alone * np.sqrt(10 ** (isr / 10) / measured)
+
+
 def add_random_anomalies(iq, fs, rng, cfg):
     """Add random anomalies to iq, as set in cfg. Returns (new iq, list of anomaly dicts)."""
     duration = len(iq) / fs
@@ -120,6 +141,12 @@ def add_random_anomalies(iq, fs, rng, cfg):
     weights = cfg["scene"]["class_weights"]
     classes = list(weights)
     p = np.array([weights[k] for k in classes]) / sum(weights.values())
+
+    isr_mode = cfg["power"]["isr_mode"]
+    if isr_mode not in ("global", "local"):
+        raise ValueError(f'isr_mode must be "global" or "local", not "{isr_mode}"')
+    if isr_mode == "local":
+        p_background, _ = power_map(iq, fs)
 
     mixed = iq.copy()
     anomalies = []
@@ -132,6 +159,9 @@ def add_random_anomalies(iq, fs, rng, cfg):
         # Each anomaly is made against the clean recording, so `isr` always refers to the
         # recording itself and not to the anomalies added before it
         anomaly_alone = add_anomaly(iq, fs, **params, **extra) - iq
+        if isr_mode == "local":
+            anomaly_alone = scale_to_local_isr(anomaly_alone, p_background, fs, params["isr"],
+                                               cfg["power"]["local_fraction"])
         mixed += anomaly_alone
 
         anomalies.append({"type": kind, **params})

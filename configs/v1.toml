@@ -18,6 +18,12 @@ fsk = 1.0
 
 [power]
 isr_db = { dist = "uniform", min = -10.0, max = 10.0 }
+# Where isr_db is measured:
+#   "global": anomaly power while it is on / average power of the whole recording
+#   "local":  anomaly power / background power, both summed only over the spectrogram
+#             pixels where the anomaly is (the pixels holding local_fraction of its energy)
+isr_mode = "global"                 # "global" or "local"
+local_fraction = 0.95
 
 [labels]
 mask_threshold_db = 0.0             # default threshold for instance and semantic masks
