@@ -3,15 +3,17 @@
 Usage:
     cfg = load_config("configs/v1.toml")
     rng = np.random.default_rng(seed)
-    sxx_db, duration_ms, anomalies = generate_spectrogram("data/iq/IQ_....bin", cfg, rng)
+    sample = generate_spectrogram("data/iq/IQ_....bin", cfg, rng)
 
-`anomalies` is a list of dicts, one per inserted anomaly: its type and all its parameters.
+`sample` holds the image, the semantic mask and one dict per inserted anomaly (its type, all
+its parameters and its labels).
 """
 import tomllib
 
 import numpy as np
 
 from anomalies import add_tone, add_chirp, add_pulse, add_comb, add_ofdm, add_fsk
+from labels import anomaly_labels, semantic_mask
 from spectrogram import iq_to_spectrogram, power_map
 
 
@@ -112,6 +114,9 @@ ANOMALY_TYPES = {
 # These classes draw random symbols themselves, so they also need the random generator
 NEEDS_RNG = {"ofdm", "fsk"}
 
+# Fixed class ids used in the masks; 0 is the background. Never renumber existing classes.
+CLASS_IDS = {"tone": 1, "chirp": 2, "pulse": 3, "comb": 4, "ofdm": 5, "fsk": 6}
+
 
 def anomaly_pixels(p_anomaly, fraction):
     """Mask of the strongest spectrogram pixels that together hold `fraction` of the energy."""
@@ -120,22 +125,25 @@ def anomaly_pixels(p_anomaly, fraction):
     return p_anomaly >= values[n_pixels - 1]
 
 
-def scale_to_local_isr(anomaly_alone, p_background, fs, isr, fraction):
-    """Rescale the anomaly so that its local ISR (measured on the spectrogram) equals isr [dB].
+def local_isr_gain(p_anomaly, p_background, isr, fraction):
+    """Amplitude factor that makes the anomaly's local ISR (on the spectrogram) equal isr [dB].
 
     Local ISR = sum of anomaly power / sum of background power, both over the anomaly's pixels.
     Measuring there, and not over the whole recording, makes isr mean the same contrast
     whether the anomaly is narrow or wide, on top of the LTE channel or in an empty band.
     """
-    p_anomaly, _ = power_map(anomaly_alone, fs)
     mask = anomaly_pixels(p_anomaly, fraction)
     measured = np.sum(p_anomaly[mask]) / np.sum(p_background[mask])
     # Power grows with amplitude squared, so one rescaling hits the target exactly
-    return anomaly_alone * np.sqrt(10 ** (isr / 10) / measured)
+    return np.sqrt(10 ** (isr / 10) / measured)
 
 
-def add_random_anomalies(iq, fs, rng, cfg):
-    """Add random anomalies to iq, as set in cfg. Returns (new iq, list of anomaly dicts)."""
+def add_random_anomalies(iq, fs, rng, cfg, p_background):
+    """Add random anomalies to iq, as set in cfg.
+
+    p_background: power map of the clean iq (needed for the local ISR).
+    Returns (new iq, list of anomaly dicts, list of power maps of each anomaly alone).
+    """
     duration = len(iq) / fs
     n_anomalies = draw(rng, cfg["scene"]["num_anomalies"])
     weights = cfg["scene"]["class_weights"]
@@ -145,11 +153,10 @@ def add_random_anomalies(iq, fs, rng, cfg):
     isr_mode = cfg["power"]["isr_mode"]
     if isr_mode not in ("global", "local"):
         raise ValueError(f'isr_mode must be "global" or "local", not "{isr_mode}"')
-    if isr_mode == "local":
-        p_background, _ = power_map(iq, fs)
 
     mixed = iq.copy()
     anomalies = []
+    p_anomalies = []
     for _ in range(n_anomalies):
         kind = str(rng.choice(classes, p=p))
         sample_params, add_anomaly = ANOMALY_TYPES[kind]
@@ -159,22 +166,41 @@ def add_random_anomalies(iq, fs, rng, cfg):
         # Each anomaly is made against the clean recording, so `isr` always refers to the
         # recording itself and not to the anomalies added before it
         anomaly_alone = add_anomaly(iq, fs, **params, **extra) - iq
+        p_anomaly, _ = power_map(anomaly_alone, fs)
         if isr_mode == "local":
-            anomaly_alone = scale_to_local_isr(anomaly_alone, p_background, fs, params["isr"],
-                                               cfg["power"]["local_fraction"])
+            gain = local_isr_gain(p_anomaly, p_background, params["isr"],
+                                  cfg["power"]["local_fraction"])
+            anomaly_alone = anomaly_alone * gain
+            p_anomaly = p_anomaly * gain ** 2
         mixed += anomaly_alone
 
-        anomalies.append({"type": kind, **params})
-    return mixed, anomalies
+        anomalies.append({"type": kind, "class_id": CLASS_IDS[kind], **params})
+        p_anomalies.append(p_anomaly)
+    return mixed, anomalies, p_anomalies
 
 
 def generate_spectrogram(path, cfg, rng):
-    """One spectrogram with random anomalies from the capture at `path`.
+    """One spectrogram with random anomalies and its labels, from the capture at `path`.
 
-    Returns (spectrogram in dB of shape (400, frequency), its duration in ms, anomaly dicts).
+    Returns a dict:
+        image_db       float (400, 400) spectrogram in dB, rows = time, columns = frequency
+        semantic_mask  uint8 (400, 400) class id per pixel, 0 = background
+        anomalies      list of dicts: type, class_id, parameters, visible, mask_pixels and,
+                       if visible, the box in pixels (x0, y0, x1, y1) and in Hz / s
+        duration_ms    time covered by the image
     """
     fs = cfg["capture"]["sample_rate_hz"]
+    threshold_db = cfg["labels"]["mask_threshold_db"]
     iq = read_capture(path, cfg["capture"]["num_samples"])
-    mixed, anomalies = add_random_anomalies(iq, fs, rng, cfg)
-    sxx_db, duration_ms = iq_to_spectrogram(mixed, fs)
-    return sxx_db, duration_ms, anomalies
+    p_background, _ = power_map(iq, fs)
+
+    mixed, anomalies, p_anomalies = add_random_anomalies(iq, fs, rng, cfg, p_background)
+    for anomaly, p_anomaly in zip(anomalies, p_anomalies):
+        anomaly.update(anomaly_labels(p_anomaly, p_background, threshold_db, fs))
+
+    class_ids = [a["class_id"] for a in anomalies]
+    image_db, duration_ms = iq_to_spectrogram(mixed, fs)
+    return {"image_db": image_db,
+            "semantic_mask": semantic_mask(p_anomalies, class_ids, p_background, threshold_db),
+            "anomalies": anomalies,
+            "duration_ms": duration_ms}
