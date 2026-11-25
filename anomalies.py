@@ -3,8 +3,8 @@ import numpy as np
 
 def _amplitude(iq, isr):
     """Amplitude giving power = average power of iq * 10^(isr/10)."""
-    power = np.mean(np.abs(iq) ** 2)
-    return np.sqrt(power * 10 ** (isr / 10))
+    power = np.mean(np.abs(iq) ** 2) # average power of the iq signal
+    return np.sqrt(power * 10 ** (isr / 10)) # amplitude of the anomaly with given isr 
 
 
 def _envelope(t, start, stop, ramp):
@@ -73,7 +73,7 @@ def add_comb(iq, fs, f_first, spacing, n_tones, start, stop, isr, ramp=0.2e-3):
     """
     t = np.arange(len(iq)) / fs
     comb = np.zeros(len(t), dtype=complex)
-    for k in range(n_tones):
+    for k in range(n_tones): #adding multiple tones, evenly spaced out 
         comb += np.exp(2j * np.pi * (f_first + k * spacing) * t)
     comb /= np.sqrt(n_tones)                          # unit power, whatever the number of tones
     return iq + _amplitude(iq, isr) * comb * _envelope(t, start, stop, ramp)
