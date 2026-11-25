@@ -13,19 +13,42 @@ def _envelope(t, start, stop, ramp):
     return np.sin(np.pi / 2 * env) ** 2
 
 
-def add_tone(iq, fs, freq, start, stop, isr, ramp=0.2e-3):
-    """Constant tone at frequency freq [Hz]. Spectrogram: vertical line."""
+def _band_noise(n, fs, bandwidth_hz, rng):
+    """Complex noise of unit power, bandwidth_hz wide around 0 Hz, shape (n,).
+
+    Multiplying a carrier by it widens its line on the spectrogram, like a modulated transmitter.
+    The power spectrum is a raised cosine (roll-off 0.5), the usual shape behind a real transmit
+    filter: flat up to +/-bandwidth_hz/4, half power (-3 dB) at +/-bandwidth_hz/2 and exactly
+    zero beyond +/-0.75 * bandwidth_hz. A sharp cut-off would look artificial, and a spectrum
+    without a hard edge would look wider the stronger the anomaly is.
+    bandwidth_hz = 0 returns ones, so the carrier stays a thin line.
+    """
+    if bandwidth_hz == 0:
+        return np.ones(n)
+    if rng is None:
+        raise ValueError("bandwidth_hz > 0 needs rng=np.random.default_rng(seed)")
+    noise = rng.standard_normal(n) + 1j * rng.standard_normal(n)
+    f = np.abs(np.fft.fftfreq(n, d=1 / fs))
+    edge = np.clip((f - bandwidth_hz / 4) / (bandwidth_hz / 2), 0, 1)  # 0 flat part, 1 zero
+    # cos on the amplitude gives cos^2, i.e. a raised cosine, on the power
+    shaped = np.fft.ifft(np.fft.fft(noise) * np.cos(np.pi / 2 * edge))
+    return shaped / np.sqrt(np.mean(np.abs(shaped) ** 2))  # unit power, so isr keeps its meaning
+
+
+def add_tone(iq, fs, freq, start, stop, isr, ramp=0.2e-3, bandwidth_hz=0.0, rng=None):
+    """Tone at frequency freq [Hz], bandwidth_hz wide. Spectrogram: vertical line."""
     t = np.arange(len(iq)) / fs
-    tone = np.exp(2j * np.pi * freq * t)
+    tone = np.exp(2j * np.pi * freq * t) * _band_noise(len(iq), fs, bandwidth_hz, rng)
     return iq + _amplitude(iq, isr) * tone * _envelope(t, start, stop, ramp)
 
 
-def add_chirp(iq, fs, f_start, f_stop, start, stop, isr, ramp=0.2e-3):
-    """Linear sweep from f_start to f_stop [Hz]. Spectrogram: slanted line."""
+def add_chirp(iq, fs, f_start, f_stop, start, stop, isr, ramp=0.2e-3, bandwidth_hz=0.0, rng=None):
+    """Linear sweep from f_start to f_stop [Hz], bandwidth_hz wide. Spectrogram: slanted line."""
     t = np.arange(len(iq)) / fs
     tau = t - start                                   # time since the chirp began
     k = (f_stop - f_start) / (stop - start)           # sweep rate [Hz/s]
     chirp = np.exp(2j * np.pi * (f_start * tau + 0.5 * k * tau ** 2))
+    chirp = chirp * _band_noise(len(iq), fs, bandwidth_hz, rng)
     return iq + _amplitude(iq, isr) * chirp * _envelope(t, start, stop, ramp)
 
 

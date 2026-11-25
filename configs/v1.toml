@@ -30,9 +30,15 @@ mask_threshold_db = 0.0             # default threshold for instance and semanti
 
 [classes.tone]
 ramp_s = 0.2e-3                     # smooth on/off time
+thin_probability = 0.5              # share of tones that stay a thin line (bandwidth 0)
+# Thickness of the other tones. 120 kHz = 1 pixel; at most 500 kHz so a thick tone never looks
+# like OFDM (at least 1 MHz). loguniform: every factor of 2 in width is equally likely.
+bandwidth_hz = { dist = "loguniform", min = 120e3, max = 500e3 }
 
 [classes.chirp]
 ramp_s = 0.2e-3
+thin_probability = 0.5
+bandwidth_hz = { dist = "loguniform", min = 120e3, max = 500e3 }
 
 [classes.pulse]
 isr_db = { dist = "uniform", min = 0.0, max = 15.0 }   # short pulses need more peak power

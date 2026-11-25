@@ -32,11 +32,15 @@ def read_capture(path, num_samples):
 
 
 def draw(rng, spec):
-    """One value from a config entry: a plain number, or {dist = "uniform"} / {dist = "choice"}."""
+    """One value from a config entry: a plain number, or {dist = "uniform" / "loguniform" / "choice"}."""
     if not isinstance(spec, dict):
         return spec
     if spec["dist"] == "uniform":
         return rng.uniform(spec["min"], spec["max"])
+    if spec["dist"] == "loguniform":
+        # Uniform in log scale: for ranges spanning several factors, small values are as
+        # likely as large ones (plain uniform would put most draws near the maximum)
+        return float(np.exp(rng.uniform(np.log(spec["min"]), np.log(spec["max"]))))
     if spec["dist"] == "choice":
         weights = spec.get("weights", [1] * len(spec["values"]))
         p = np.array(weights) / np.sum(weights)
@@ -55,16 +59,24 @@ def _window_and_power(rng, cfg, kind, duration):
 
 # One function per anomaly class: draws its parameters (as the add_* function expects them).
 
+def _bandwidth(rng, c):
+    """Line thickness [Hz]: 0 (a thin line) with probability thin_probability, else drawn."""
+    if rng.uniform() < c["thin_probability"]:
+        return 0.0
+    return draw(rng, c["bandwidth_hz"])
+
+
 def sample_tone(rng, cfg, duration):
     c, f_max = cfg["classes"]["tone"], cfg["scene"]["f_max_hz"]
     return {"freq": rng.uniform(-f_max, f_max), "ramp": c["ramp_s"],
-            **_window_and_power(rng, cfg, "tone", duration)}
+            "bandwidth_hz": _bandwidth(rng, c), **_window_and_power(rng, cfg, "tone", duration)}
 
 
 def sample_chirp(rng, cfg, duration):
     c, f_max = cfg["classes"]["chirp"], cfg["scene"]["f_max_hz"]
     return {"f_start": rng.uniform(-f_max, f_max), "f_stop": rng.uniform(-f_max, f_max),
-            "ramp": c["ramp_s"], **_window_and_power(rng, cfg, "chirp", duration)}
+            "ramp": c["ramp_s"], "bandwidth_hz": _bandwidth(rng, c),
+            **_window_and_power(rng, cfg, "chirp", duration)}
 
 
 def sample_pulse(rng, cfg, duration):
@@ -111,8 +123,9 @@ ANOMALY_TYPES = {
     "fsk": (sample_fsk, add_fsk),
 }
 
-# These classes draw random symbols themselves, so they also need the random generator
-NEEDS_RNG = {"ofdm", "fsk"}
+# These classes draw random numbers themselves (OFDM/FSK symbols, the noise that makes a tone or
+# chirp thick), so they also need the random generator
+NEEDS_RNG = {"tone", "chirp", "ofdm", "fsk"}
 
 # Fixed class ids used in the masks; 0 is the background. Never renumber existing classes.
 CLASS_IDS = {"tone": 1, "chirp": 2, "pulse": 3, "comb": 4, "ofdm": 5, "fsk": 6}
